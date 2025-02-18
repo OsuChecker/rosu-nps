@@ -1,78 +1,84 @@
-# nps
+# rosu-nps
 
-## Project Description
 
-**nps** is a library that calculates and returns a JSON file with the number of notes per second (**Notes Per Second**, abbreviated as NPS) on sequences based on a given frequency.
+A Rust library for analyzing note density and distribution in osu! beatmaps. Built on top of rosu-map, this library provides tools to calculate Notes Per Second (NPS) and create temporal distribution analysis of beatmap patterns.
 
-The project analyzes `.osu` files (used in the rhythm game [Osu!](https://osu.ppy.sh/)) to determine the density of notes in defined time intervals, making it useful for analytics or tools for players and developers.
+## Features
 
-Originally, this project was developed in **C++**, but I decided to reimplement it in **Rust** to leverage its memory safety guarantees and integrate it more easily in a **Python** environment (via PyO3). This makes it possible to use the library in a Flask server.
+- Calculate average Notes Per Second (NPS) for beatmaps
+- Generate note density distributions with customizable block sizes
+- Analyze note patterns using frequency-based sampling
+- Fast performance (~12.6µs for 1000-block distribution analysis)
+- Zero-copy operations on beatmap data
 
----
+## Installation
 
-## Key Features
+Add this to your `Cargo.toml`:
 
-- **Download and read `.osu` files** from a provided URL.
-- **Analysis**: Extract all "hit objects" (notes) from `.osu` files.
-- **Calculate note density per second** across defined time intervals.
-- **JSON Output**: The calculations are returned in JSON format for seamless integration into external applications.
-
----
-
-## Documentation
-
-For more detailed technical instructions, visit the documentation directly on the website in the **doc** section.
-
----
-
-## Installation and Compilation
-
-### Prerequisites:
-
-- Python 3 installed.
-- The **maturin** package:  
-  Install it using the following command:
-  ```bash
-  pip install maturin
-  ```
-
-### Steps to Compile and Use the Project:
-
-1. Create a Python virtual environment:
-   ```bash
-   python3 -m venv venv
-   ```
-
-2. Activate the virtual environment:
-   ```bash
-   source venv/bin/activate
-   ```
-
-3. Compile and install the Rust module as a Python extension using **maturin**:
-   ```bash
-   maturin develop
-   ```
-
-### Using the Library in Python:
-
-After compilation, you can import and use the library as follows:
-```python
-import nps
-
-# Usage example
-url = "http://example.com/sample.osu"
-frequency = 1.0  # Frequency in intervals per second.
-
-try:
-    result = nps.get_nps(url, frequency)
-    print(result)
-except ValueError as e:
-    print(f"Error: {e}")
+```toml
+[dependencies]
+rosu-nps = "0.1.0"
 ```
 
----
+## Usage
 
-## Author
+```rust
+use rosu_map::Beatmap;
+use rosu_nps::{calculate_avg_nps, calculate_distribution, calculate_by_frequency};
 
-Developed by **Osef0760**  
-**Contact**: osefcode@gmail.com
+fn main() {
+    let beatmap = Beatmap::parse("path/to/map.osu").unwrap();
+    
+    // Calculate average NPS
+    if let Some(nps) = calculate_avg_nps(&beatmap) {
+        println!("Average NPS: {}", nps);
+    }
+    
+    // Get distribution with 100 blocks
+    if let Some(distribution) = calculate_distribution(&beatmap, 100) {
+        println!("Note distribution: {:?}", distribution);
+    }
+    
+    // Analyze with 10Hz sampling rate
+    if let Some(frequency_dist) = calculate_by_frequency(&beatmap, 10.0) {
+        println!("Frequency distribution: {:?}", frequency_dist);
+    }
+}
+```
+
+## Performance
+
+Benchmarked on a sample beatmap with 1000 distribution blocks (0.1% precision):
+
+```
+time: [12.479 µs 12.660 µs 12.858 µs]
+```
+
+
+## License
+
+MIT License
+
+Copyright (c) 2024 Osef0760
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
