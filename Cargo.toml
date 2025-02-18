@@ -1,6 +1,6 @@
 [package]
 name = "rosu_nps"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["Osef0760 <osefcode@gmail.com>"]
 description = "A library for analyzing note density and distribution in osu! beatmaps"
