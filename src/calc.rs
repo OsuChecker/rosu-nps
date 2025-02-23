@@ -61,18 +61,23 @@ pub fn to_sec(ms: f64) -> f64{
 pub fn calculate_distribution(map: &Beatmap, block: i32) -> Option<Vec<f64>> {
     if block <= 0 { return None }
     if map.hit_objects.is_empty() { return None }
+
     let play_length = get_play_length(map)?;
-    let block_duration = play_length / block as f64;
+    let first_note_time = map.hit_objects.first()?.start_time;
+    let actual_duration = play_length ;
+    let block_duration = actual_duration / block as f64;
     let block_size = block as usize;
     let mut counts = vec![0usize; block_size];
     let inv_block_duration = 1.0 / block_duration;
     let hit_objects = &map.hit_objects;
 
     for hit_object in hit_objects {
-        let index = ((hit_object.start_time * inv_block_duration) as usize)
+        let relative_time = hit_object.start_time - first_note_time;
+        let index = ((relative_time * inv_block_duration) as usize)
             .min(block_size - 1);
         counts[index] += 1;
     }
+
     let sec_duration = to_sec(block_duration);
 
     Some(counts
@@ -80,6 +85,7 @@ pub fn calculate_distribution(map: &Beatmap, block: i32) -> Option<Vec<f64>> {
         .map(|count| count as f64 / sec_duration)
         .collect())
 }
+
 
 /// Calculates the note density distribution based on a specified sampling frequency
 ///
@@ -127,7 +133,7 @@ mod tests {
         let distribution = calculate_by_frequency(&map, frequency)
             .expect("Calc distribution failed");
         assert_eq!(distribution.len(), 4);
-        let expected = [18.064172837569114, 12.838660604344815, 17.532071069695096, 19.142020008390833];
+        let expected = [18.10510374279019, 12.825016969271122, 17.532071069695096, 19.11473273824345];
         assert_eq!(distribution, expected);
     }
     #[test]
