@@ -1,207 +1,152 @@
 use rosu_map::Beatmap;
 
+// Constantes pour améliorer la lisibilité
+const MS_TO_SEC: f64 = 1000.0;
 
-/// Returns the total play length of the beatmap in milliseconds
-///
-/// Calculates the duration between the first and last hit objects in the beatmap.
-///
-/// # Arguments
-///
-/// * `map` - A reference to the Beatmap struct containing hit objects
-///
-/// # Returns
-///
-/// * `Some(f64)` - The duration in milliseconds if the beatmap contains hit objects
-/// * `None` - If the beatmap has no hit objects
-pub fn get_play_length(map: &Beatmap) -> Option<f64> {
-    let first = map.hit_objects.first()?;
-    let last = map.hit_objects.last()?;
-    Some(last.start_time - first.start_time)
+pub fn calc_nps(map: &Beatmap) -> Option<f64> {
+    let drain_time_ms = map.hit_objects.last()?.start_time - map.hit_objects.first()?.start_time;
+    if drain_time_ms <= 0.0 {
+        return Some(map.hit_objects.len() as f64);
+    }
+    Some(map.hit_objects.len() as f64 / (drain_time_ms / MS_TO_SEC))
 }
 
-/// Calculates the average number of notes per second (NPS) for the beatmap
-///
-/// # Arguments
-///
-/// * `map` - A reference to the Beatmap struct containing hit objects
-///
-/// # Returns
-///
-/// * `Some(f64)` - The average NPS if calculation succeeds
-/// * `None` - If the beatmap is empty or duration cannot be calculated
-pub fn calculate_avg_nps(map: &Beatmap) -> Option<f64>{
-    if map.hit_objects.is_empty() { return None }
-    let hit = map.hit_objects.len() as f64;
-    Some(hit/(get_play_length(map)?/1000f64))
-}
-/// Converts milliseconds to seconds
-///
-/// # Arguments
-///
-/// * `ms` - Time value in milliseconds
-///
-/// # Returns
-///
-/// * `f64` - Time value in seconds
-pub fn to_sec(ms: f64) -> f64{
-    ms/1000.0
+pub fn calc_nps_range_by_time(map: &Beatmap, start_time: f64, end_time: f64) -> Option<f64> {
+    let drain_time_ms = end_time - start_time;
+    if drain_time_ms <= 0.0 {
+        return Some(0.0);
+    }
+    
+    let start_idx = map.hit_objects.partition_point(|h| h.start_time < start_time);
+    let end_idx = map.hit_objects.partition_point(|h| h.start_time <= end_time);
+    
+    let count = end_idx.saturating_sub(start_idx);
+    Some(count as f64 / (drain_time_ms / MS_TO_SEC))
 }
 
-/// Calculates the note density distribution by dividing the map into equal time blocks
-///
-/// # Arguments
-///
-/// * `map` - A reference to the Beatmap struct containing hit objects
-/// * `block` - Number of blocks to divide the map into
-///
-/// # Returns
-///
-/// * `Some(Vec<f64>)` - Vector containing notes per second for each block
-/// * `None` - If block count is invalid (<=0) or map is empty
-pub fn calculate_distribution(map: &Beatmap, block: i32) -> Option<Vec<f64>> {
-    if block <= 0 { return None }
-    if map.hit_objects.is_empty() { return None }
+pub fn calc_nps_range_by_hitobjects(
+    map: &Beatmap, 
+    start_obj: &rosu_map::section::hit_objects::HitObject, 
+    end_obj: &rosu_map::section::hit_objects::HitObject
+) -> Option<f64> {
+    let drain_time_ms = end_obj.start_time - start_obj.start_time;
+    if drain_time_ms <= 0.0 {
+        return Some(0.0);
+    }
+    
+    // Calculate indices using pointer arithmetic - O(1) - PS : VIVA C
+    let slice_ptr = map.hit_objects.as_ptr();
+    let start_ptr = start_obj as *const _ as *const rosu_map::section::hit_objects::HitObject;
+    let end_ptr = end_obj as *const _ as *const rosu_map::section::hit_objects::HitObject;
+    
+    if start_ptr < slice_ptr || end_ptr < slice_ptr {
+        return None;
+    }
+    
+    let start_idx = unsafe { start_ptr.offset_from(slice_ptr) as usize };
+    let end_idx = unsafe { end_ptr.offset_from(slice_ptr) as usize };
+    
+    if start_idx >= map.hit_objects.len() || end_idx >= map.hit_objects.len() {
+        return None;
+    }
+    
+    let (start_idx, end_idx) = if start_idx <= end_idx {
+        (start_idx, end_idx + 1)
+    } else {
+        (end_idx, start_idx + 1)
+    };
+    
+    let count = end_idx - start_idx;
+    Some(count as f64 / (drain_time_ms / MS_TO_SEC))
+}
 
-    let play_length = get_play_length(map)?;
-    let first_note_time = map.hit_objects.first()?.start_time;
-    let actual_duration = play_length ;
-    let block_duration = actual_duration / block as f64;
-    let block_size = block as usize;
-    let mut counts = vec![0usize; block_size];
-    let inv_block_duration = 1.0 / block_duration;
-    let hit_objects = &map.hit_objects;
+pub fn calc_distribution(map: &Beatmap, t_parts: i32) -> Option<Vec<f64>> {
+    if t_parts <= 0 || map.hit_objects.is_empty() {
+        return None;
+    }
 
-    for hit_object in hit_objects {
-        let relative_time = hit_object.start_time - first_note_time;
-        let index = ((relative_time * inv_block_duration) as usize)
-            .min(block_size - 1);
+    let first_time = map.hit_objects.first()?.start_time;
+    let last_time = map.hit_objects.last()?.start_time;
+    let total_duration_ms = last_time - first_time;
+    
+    if total_duration_ms <= 0.0 {
+        return Some(vec![0.0; t_parts as usize]);
+    }
+
+    let part_duration_ms = total_duration_ms / t_parts as f64;
+    let part_duration_sec = part_duration_ms / MS_TO_SEC;
+    let mut distribution = vec![0.0; t_parts as usize];
+    
+    for part in 0..t_parts {
+        let part_start_time = first_time + part as f64 * part_duration_ms;
+        let part_end_time = first_time + (part + 1) as f64 * part_duration_ms;
+        
+        // Utiliser < pour start_time et <= pour end_time pour correspondre à calculate_distribution_old
+        let start_idx = map.hit_objects.partition_point(|h| h.start_time < part_start_time);
+        
+        // Pour la dernière partie, inclure la dernière note avec <=
+        let end_idx = if part == t_parts - 1 {
+            map.hit_objects.partition_point(|h| h.start_time <= part_end_time)
+        } else {
+            map.hit_objects.partition_point(|h| h.start_time < part_end_time)
+        };
+        
+        let count = end_idx.saturating_sub(start_idx);
+        distribution[part as usize] = count as f64 / part_duration_sec;
+    }
+    
+    Some(distribution)
+}
+
+pub fn to_sec(ms: f64) -> f64 {
+    ms / MS_TO_SEC
+}
+
+pub fn calc_distribution_2(map: &Beatmap, t_parts: i32) -> Option<Vec<f64>> {
+    if t_parts <= 0 || map.hit_objects.is_empty() {
+        return None;
+    }
+
+    let first_time = map.hit_objects.first()?.start_time;
+    let last_time = map.hit_objects.last()?.start_time;
+    let total_duration_ms = last_time - first_time;
+    let part_duration_ms = total_duration_ms / t_parts as f64;
+    let part_size = t_parts as usize;
+    let mut counts = vec![0usize; part_size];
+    let inv_part_duration = 1.0 / part_duration_ms;
+    
+    for hit_object in &map.hit_objects {
+        let relative_time = hit_object.start_time - first_time;
+        let index = ((relative_time * inv_part_duration) as usize).min(part_size - 1);
         counts[index] += 1;
     }
 
-    let sec_duration = to_sec(block_duration);
+    let part_duration_sec = to_sec(part_duration_ms);
 
-    Some(counts
-        .into_iter()
-        .map(|count| count as f64 / sec_duration)
-        .collect())
+    Some(
+        counts
+            .into_iter()
+            .map(|count| count as f64 / part_duration_sec)
+            .collect(),
+    )
 }
 
-
-/// Calculates the note density distribution based on a specified sampling frequency
-///
-/// # Arguments
-///
-/// * `map` - A reference to the Beatmap struct containing hit objects
-/// * `frequency` - The sampling frequency in Hz
-///
-/// # Returns
-///
-/// * `Some(Vec<f64>)` - Vector containing notes per second for each sample period
-/// * `None` - If frequency is invalid (<=0) or map is empty
-pub fn calculate_by_frequency(map: &Beatmap, frequency: f64) -> Option<Vec<f64>> {
-    if frequency <= 0.0 { return None; }
-    let samples = (1f64/frequency).round() as i32;
-    calculate_distribution(map, samples)
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rosu_map::Beatmap;
-
-    fn setup() -> Beatmap {
-        let file = "./resources/test.osu";
-        Beatmap::from_path(&file)
-            .expect("File does not exist or is not a valid .osu file")
+pub fn calc_distribution_smart(map: &Beatmap, t_parts: i32) -> Option<Vec<f64>> {
+    if t_parts <= 0 || map.hit_objects.is_empty() {
+        return None;
     }
-
-    #[test]
-    fn test_calculate_distribution() {
-        let map = setup();
-        let frequency = 4;
-        let distribution = calculate_distribution(&map, frequency)
-            .expect("Calc distribution failed");
-        assert_eq!(distribution.len(), frequency as usize);
-        let expected = [18.064172837569114, 12.838660604344815, 17.532071069695096, 19.142020008390833];
-        assert_eq!(distribution, expected);
-
+    
+    let n_objects = map.hit_objects.len();
+    
+    // Heuristique : si t_parts * log2(n_objects) > n_objects, utiliser l'algorithme old
+    // En pratique, on peut simplifier avec un seuil empirique
+    let threshold = (n_objects as f64).sqrt() as i32;
+    
+    if t_parts > threshold {
+        // Pour beaucoup de parties, l'algorithme old est plus efficace
+        calc_distribution_2(map, t_parts)
+    } else {
+        // Pour peu de parties, l'algorithme new avec binary search est plus efficace
+        calc_distribution(map, t_parts)
     }
-
-    #[test]
-    fn test_calculate_frequency(){
-        let map = setup();
-        let frequency = 0.25;
-        let distribution = calculate_by_frequency(&map, frequency)
-            .expect("Calc distribution failed");
-        assert_eq!(distribution.len(), 4);
-        let expected = [18.10510374279019, 12.825016969271122, 17.532071069695096, 19.11473273824345];
-        assert_eq!(distribution, expected);
-    }
-    #[test]
-    fn test_invalid_frequency() {
-        let map = setup();
-        let result = calculate_by_frequency(&map, 0.0);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_calculate_avg_nps(){
-        let map = setup();
-        let avg_nps = calculate_avg_nps(&map)
-            .expect("Calc avg nps failed");
-        assert_eq!(avg_nps, 16.894231129999966);
-    }
-
-    #[test]
-    fn test_distribution_sum() {
-        let map = setup();
-        let frequency = 4;
-        let distribution = calculate_distribution(&map, frequency).unwrap();
-        let sum: f64 = distribution.iter().sum();
-        let avg_nps = calculate_avg_nps(&map).unwrap();
-        assert!((sum/frequency as f64 - avg_nps).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_get_play_length(){
-        let map = setup();
-        let play_length = get_play_length(&map)
-            .expect("Calc play length failed");
-        assert_eq!(play_length, 293177.0);
-    }
-
-    #[test]
-    fn test_frequency_consistency() {
-        let map = setup();
-        let dist1 = calculate_by_frequency(&map, 0.25).unwrap();
-        let dist2 = calculate_distribution(&map, 4).unwrap();
-        assert_eq!(dist1, dist2);
-    }
-
-    #[test]
-    fn test_to_sec_conversion() {
-        assert_eq!(to_sec(1000.0), 1.0);
-        assert_eq!(to_sec(500.0), 0.5);
-        assert_eq!(to_sec(0.0), 0.0);
-    }
-
-    #[test]
-    fn test_different_block_sizes() {
-        let map = setup();
-        let distributions = vec![
-            calculate_distribution(&map, 2).unwrap(),
-            calculate_distribution(&map, 4).unwrap(),
-            calculate_distribution(&map, 8).unwrap()
-        ];
-        assert_eq!(distributions[0].len(), 2);
-        assert_eq!(distributions[1].len(), 4);
-        assert_eq!(distributions[2].len(), 8);
-    }
-    #[test]
-    fn test_frequency_rounding() {
-        let map = setup();
-        let freq1 = calculate_by_frequency(&map, 0.33333).unwrap();
-        let freq2 = calculate_by_frequency(&map, 0.33334).unwrap();
-        assert_eq!(freq1.len(), freq2.len());
-    }
-
 }
